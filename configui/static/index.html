@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harness config</title>
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="theme.css">
+</head>
+<body data-view="overview">
+<a class="skip" href="#main">Skip to content</a>
+<header>
+  <p class="mark">harness / config</p>
+  <nav id="kinds" aria-label="Sections"></nav>
+  <div class="tools">
+    <button id="jump-btn" class="ghost" type="button">Jump to <kbd>Ctrl K</kbd></button>
+  </div>
+</header>
+<aside id="list" aria-label="Entries"></aside>
+<main id="main">
+  <section id="dashboard" aria-label="Overview"></section>
+  <section id="editor" aria-label="Editor"></section>
+  <section id="side" aria-label="Validation and changes">
+    <h2>Validation</h2>
+    <div id="issues" aria-live="polite"></div>
+    <h2>Changes to be saved</h2>
+    <pre id="diff" class="muted">No changes.</pre>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

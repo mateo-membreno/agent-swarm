@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "harness.model",
+  "title": "Model alias",
+  "description": "The name agents use to ask for a model. It maps to one model on one backend. There is no implicit default and no automatic fallback.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "backend", "model"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,60}$",
+      "description": "The alias agents put in inference.models, e.g. qwen2.5-7b-instruct."
+    },
+    "description": { "type": "string", "maxLength": 300 },
+    "backend": { "type": "string", "x-ref": "backend", "description": "The backend that serves this alias." },
+    "model": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Model path or provider model id." },
+    "kind": { "enum": ["chat", "embedding"], "default": "chat" },
+    "allowed_agents": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+      "description": "Restrict which agents may use this alias. Recommended for hosted aliases."
+    },
+    "fallback": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,60}$" },
+      "description": "Optional, explicit. Aliases to try, in order, if this backend is down. Empty by default. A hosted alias here means data leaves the machine."
+    }
+  }
+}

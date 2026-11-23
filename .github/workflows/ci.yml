@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: CI only reads the repo.
+permissions:
+  contents: read
+
+# A newer push to the same ref cancels the older run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check configui tests
+      - name: Tests (includes validation of the shipped config/)
+        run: pytest -q
+
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: JS syntax
+        run: node --check configui/static/app.js
+
+  smoke:
+    name: Server boots
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e .
+      - name: Start the app and probe it
+        run: |
+          python -m configui --port 8787 &
+          pid=$!
+          for i in $(seq 1 20); do
+            curl -fsS http://127.0.0.1:8787/api/kinds >/dev/null && break
+            sleep 0.5
+          done
+          curl -fsS http://127.0.0.1:8787/ | grep -q "Harness config"
+          curl -fsS http://127.0.0.1:8787/api/api | grep -q calendar_read
+          # Foreign Host headers must be refused (DNS-rebinding guard).
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example.com' http://127.0.0.1:8787/api/kinds)" = "400"
+          kill $pid
+
+  ui:
+    name: UI behaviour (jsdom)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: pip install -e .
+      - run: npm install --no-audit --no-fund
+        working-directory: tests/ui
+      - name: Drive the UI against a server on a scratch copy of config/
+        run: |
+          cp -r config "$RUNNER_TEMP/config"
+          HARNESS_CONFIG_DIR="$RUNNER_TEMP/config" python -m configui --port 8787 &
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:8787/api/kinds >/dev/null && break; sleep 0.5; done
+          node tests/ui/drive.mjs

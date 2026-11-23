@@ -1,0 +1,6 @@
+{
+  "name": "harness-config-ui-test",
+  "private": true,
+  "type": "module",
+  "dependencies": { "jsdom": "^25.0.0" }
+}

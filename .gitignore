@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+secrets/
+audit/
+data/
+node_modules/
+
+# Local tooling and agent folders
+.agent/
+.agents/
+.claude/
+.cursor/
+.devin/
+.gemini/
+.ruff_cache/
+.impeccable/

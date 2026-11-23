@@ -1,0 +1,29 @@
+name: email.inbound.v1
+description: A new email arrived (from the Gmail source connector).
+schema:
+  $id: email.inbound.v1
+  type: object
+  additionalProperties: false
+  required:
+    - message_id
+    - received_at
+    - body_artifact
+  properties:
+    message_id:
+      type: string
+      pattern: ^[A-Za-z0-9_-]{1,64}$
+    received_at:
+      type: string
+      format: date-time
+    from_domain:
+      type: string
+      pattern: ^[a-z0-9.-]{1,253}$
+    subject:
+      type: string
+      maxLength: 200
+      x-free-text: true
+    body_artifact:
+      type: string
+      pattern: ^art_[a-z0-9]+$
+retention: 3d
+partitions: 1

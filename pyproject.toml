@@ -1,0 +1,30 @@
+[project]
+name = "agent-harness-config"
+version = "0.1.0"
+description = "Configuration store and local web UI for the agent harness (plan.md §21)"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
+  "pyyaml>=6",
+  "jsonschema>=4.21",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.6"]
+
+[tool.setuptools.packages.find]
+include = ["configui*"]
+
+[tool.setuptools.package-data]
+configui = ["schemas/*.json", "static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

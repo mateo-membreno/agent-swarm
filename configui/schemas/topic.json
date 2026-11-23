@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "harness.topic",
+  "title": "Topic",
+  "description": "A Kafka-API topic on the event bus plus the JSON Schema every message on it must satisfy (plan.md §6).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "schema"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+\\.v[1-9][0-9]*$",
+      "description": "<domain>.<event>.v<N>, e.g. email.triaged.v1. A breaking change creates a new version."
+    },
+    "description": { "type": "string", "maxLength": 300 },
+    "schema": {
+      "type": "object",
+      "default": { "type": "object", "additionalProperties": false, "required": [], "properties": {} },
+      "description": "JSON Schema for the payload. Objects must set additionalProperties: false. Strings must be typed (enum, pattern, format) or marked x-free-text: true with a maxLength."
+    },
+    "retention": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*(h|d)$",
+      "default": "7d",
+      "description": "How long messages are kept. This is also the replay window. e.g. 72h or 7d."
+    },
+    "partitions": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64,
+      "default": 1,
+      "description": "1 keeps total ordering. More partitions give throughput; set a key for per-entity ordering."
+    },
+    "key": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Payload field used as the partition key. Must be a property of the schema."
+    }
+  }
+}

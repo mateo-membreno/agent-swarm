@@ -1,0 +1,70 @@
+/* Specimen. A type specimen sheet: white, ink, one foundry blue, one narrow column.
+   Hierarchy comes from scale contrast alone: the page's subject at display size against small, quiet data.
+   Lends: palette, scale contrast, and a strict measure. */
+:root {
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --radius: 3px;
+  --fs: 15px;
+  --bg: #ffffff; --surface: #ffffff; --surface-2: #f3f3f1; --field: #ffffff;
+  --text: #0b0b0c; --muted: #565659; --line: #e3e3df; --line-strong: #85858a;
+  --accent: #1f3dff; --accent-ink: #ffffff; --focus: #1f3dff;
+  --err: #c4001c; --warn: #8a5600; --ok: #176b33;
+  --add: #e4f6e9; --del: #fde4e7; --code: #f3f3f1; --link: #1f3dff;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b0b0c; --surface: #111113; --surface-2: #1b1b1e; --field: #111113;
+    --text: #f4f4f2; --muted: #a5a5a8; --line: #25252a; --line-strong: #707076;
+    --accent: #8896ff; --accent-ink: #0b0b0c; --focus: #aab4ff;
+    --err: #ff7a8c; --warn: #e5b45a; --ok: #6fd08a;
+    --add: #17321f; --del: #45191f; --code: #1b1b1e; --link: #8896ff;
+  }
+}
+
+header { display: grid; grid-template-columns: auto 1fr auto; gap: 24px; align-items: baseline; padding: 18px clamp(16px, 5vw, 56px) 0; max-width: 960px; margin: 0 auto; }
+.mark { margin: 0; font: 13px var(--mono); color: var(--muted); }
+header nav { gap: 4px 20px; }
+header nav button { padding: 4px 0; border-radius: 0; font-size: 15px; color: var(--muted); border-bottom: 2px solid transparent; }
+header nav button:hover { background: none; color: var(--text); }
+header nav button[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
+.tools { display: flex; gap: 16px; align-items: center; font-size: 13px; }
+
+#list { display: flex; flex-wrap: wrap; gap: 4px 18px; padding: 14px clamp(16px, 5vw, 56px) 0; max-width: 960px; margin: 0 auto; font-size: 14px; }
+#list button.item { padding: 2px 0; border-radius: 0; font-family: var(--mono); font-size: 13px; color: var(--muted); }
+#list button.item:hover { background: none; color: var(--text); }
+#list button.item[aria-current="true"] { color: var(--accent); text-decoration: underline; text-underline-offset: 4px; }
+#list button.add { margin-left: 8px; }
+#list select.create { width: auto; padding: 3px 8px; font-size: 13px; margin-left: 8px; }
+
+main { max-width: 960px; margin: 0 auto; padding: clamp(24px, 6vw, 72px) clamp(16px, 5vw, 56px) 96px; }
+#editor, #dashboard { max-width: 720px; }
+
+/* the subject at specimen scale */
+.page-title, #editor > h2 {
+  font-size: clamp(40px, 7vw, 72px); font-weight: 300; letter-spacing: -0.035em; line-height: 1;
+  margin: 0 0 clamp(28px, 5vw, 56px); overflow-wrap: anywhere; text-wrap: balance;
+}
+.dash-section { margin-bottom: 56px; }
+.dash-section h2 { font-size: 30px; font-weight: 300; letter-spacing: -0.02em; margin-bottom: 14px; display: flex; align-items: baseline; gap: 14px; }
+.dash-section h2 .count { font: 13px var(--mono); color: var(--muted); }
+table { font-size: 14px; }
+thead th { font: 12px var(--mono); }
+tbody th { font-family: var(--mono); font-size: 13px; font-weight: 500; }
+th, td { border-bottom-color: var(--line); padding: 9px 14px 9px 0; }
+ul.attention li { padding: 9px 0; border-bottom: 1px solid var(--line); }
+
+.field { margin: 22px 0; }
+.field > label { font-size: 13px; font-weight: 600; }
+fieldset { border-width: 1px 0 0; border-radius: 0; padding: 4px 0 8px; margin-top: 28px; }
+legend { font-size: 20px; font-weight: 300; padding: 0 12px 0 0; }
+input[type=text], input[type=number], select, textarea { padding: 9px 10px; }
+button.primary { padding: 10px 22px; }
+
+#side { margin-top: 64px; border-top: 1px solid var(--text); padding-top: 18px; max-width: 720px; }
+#side h2 { font-size: 22px; font-weight: 300; margin: 0 0 8px; }
+#side h2:not(:first-child) { margin-top: 28px; }
+
+@media (max-width: 720px) {
+  header { grid-template-columns: 1fr; gap: 8px; }
+}
