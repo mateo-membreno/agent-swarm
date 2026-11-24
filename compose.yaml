@@ -1,0 +1,78 @@
+# Local harness infrastructure. `harness up` wraps this.
+name: harness
+
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.7
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=768M
+      - --reserve-memory=0M
+      - --overprovisioned
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://127.0.0.1:19092
+    ports:
+      - "127.0.0.1:19092:19092"   # host-only: the controller and CLI use this
+    networks: [bus_net, host_net]   # host_net exists only so the loopback port can be published
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  gateway:
+    image: harness-gateway:latest
+    build:
+      context: .
+      dockerfile: images/gateway/Dockerfile
+    # Run as the host user so bind-mounted config, secrets and data are readable/writable on macOS and Linux.
+    user: "${HARNESS_UID:-1000}:${HARNESS_GID:-1000}"
+    environment:
+      BOOTSTRAP: redpanda:9092
+      CONFIG_DIR: /config
+      SECRETS_DIR: /secrets
+      DATA_DIR: /data
+      HARNESS_ADMIN_TOKEN: ${HARNESS_ADMIN_TOKEN:?run `harness up`, which generates this}
+    volumes:
+      - ./config:/config:ro
+      - ./secrets:/secrets:ro
+      - ./data/gateway:/data
+    ports:
+      - "127.0.0.1:18081:8081"   # admin API: loopback only, bearer-token protected
+    networks: [bus_net, egress_net]
+    depends_on:
+      redpanda: {condition: service_healthy}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8081), 2)"]
+      interval: 3s
+      timeout: 4s
+      retries: 20
+
+  # Deterministic fake LLM so the demo and CI run with no API key and no model download.
+  # It is named like the shipped local model's endpoint (http://inference-cpu:8080/v1).
+  # For real inference, point that model's endpoint at Ollama: http://host.docker.internal:11434/v1
+  inference-cpu:
+    profiles: [stub]
+    image: harness-stub-llm:latest
+    build:
+      context: images/stub-llm
+    networks: [egress_net]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+networks:
+  bus_net:
+    name: harness_bus
+    internal: true          # no route to the internet; the broker is never exposed to sandboxes
+  host_net:
+    name: harness_host      # ordinary bridge; sandboxes and the gateway are never attached to it
+  egress_net:
+    name: harness_egress    # the gateway's route to hosted APIs and host.docker.internal; sandboxes never join it

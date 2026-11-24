@@ -1,30 +1,182 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "harness.model",
-  "title": "Model alias",
-  "description": "The name agents use to ask for a model. It maps to one model on one backend. There is no implicit default and no automatic fallback.",
+  "title": "Model",
+  "description": "A model and where it runs: on this machine, or at a hosted provider. Name it after the model itself. There is no implicit default and no automatic fallback.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["name", "backend", "model"],
+  "required": [
+    "name",
+    "provider",
+    "model"
+  ],
+  "x-create-by": "provider",
   "properties": {
     "name": {
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,60}$",
-      "description": "The alias agents put in inference.models, e.g. qwen2.5-7b-instruct."
+      "description": "The model's own id, as agents list it in inference.models, e.g. qwen2.5-1.5b-q4 or claude-sonnet-5-5."
     },
-    "description": { "type": "string", "maxLength": 300 },
-    "backend": { "type": "string", "x-ref": "backend", "description": "The backend that serves this alias." },
-    "model": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Model path or provider model id." },
-    "kind": { "enum": ["chat", "embedding"], "default": "chat" },
+    "description": {
+      "type": "string",
+      "maxLength": 300
+    },
+    "provider": {
+      "enum": [
+        "local",
+        "anthropic",
+        "openai_compatible"
+      ],
+      "x-enum-labels": {
+        "local": "Local (runs on this machine)",
+        "anthropic": "Anthropic (Claude, hosted)",
+        "openai_compatible": "Hosted, OpenAI-compatible"
+      },
+      "description": "Local models run on a server on this machine with no internet. Hosted models send prompts off the machine."
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Model path (local) or the provider's model id (hosted)."
+    },
+    "kind": {
+      "enum": [
+        "chat",
+        "embedding"
+      ],
+      "default": "chat"
+    },
+    "endpoint": {
+      "type": "string",
+      "pattern": "^https?://[^\\s]+$",
+      "x-when": {
+        "provider": [
+          "local"
+        ]
+      },
+      "description": "OpenAI-compatible endpoint of the local server, e.g. http://inference-cpu:8080/v1 or Ollama at http://host.docker.internal:11434/v1."
+    },
+    "base_url": {
+      "type": "string",
+      "pattern": "^https://[^\\s]+$",
+      "x-when": {
+        "provider": [
+          "openai_compatible"
+        ]
+      },
+      "description": "https base URL of the provider's API."
+    },
+    "credential": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "x-when": {
+        "provider": [
+          "anthropic",
+          "openai_compatible"
+        ]
+      },
+      "description": "Name of a vault entry (secrets/). Never paste the key itself."
+    },
+    "egress_host": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$",
+      "x-when": {
+        "provider": [
+          "openai_compatible"
+        ]
+      },
+      "description": "Host added to the gateway egress allowlist (must match base_url)."
+    },
+    "daily_spend_cap_usd": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "x-when": {
+        "provider": [
+          "anthropic",
+          "openai_compatible"
+        ]
+      },
+      "description": "Required for hosted models so spend is always bounded."
+    },
+    "max_concurrency": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1024,
+      "description": "How many requests the gateway sends this model at once. Others wait in the gateway's queue."
+    },
     "allowed_agents": {
       "type": "array",
-      "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
-      "description": "Restrict which agents may use this alias. Recommended for hosted aliases."
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]*$"
+      },
+      "description": "Restrict which agents may use this model. Recommended for hosted models."
     },
     "fallback": {
       "type": "array",
-      "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,60}$" },
-      "description": "Optional, explicit. Aliases to try, in order, if this backend is down. Empty by default. A hosted alias here means data leaves the machine."
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,60}$"
+      },
+      "description": "Optional, explicit. Models to try, in order, if this one is down. Empty by default. A hosted model here means data leaves the machine."
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "provider": {
+            "const": "local"
+          }
+        },
+        "required": [
+          "provider"
+        ]
+      },
+      "then": {
+        "required": [
+          "endpoint"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "provider": {
+            "const": "anthropic"
+          }
+        },
+        "required": [
+          "provider"
+        ]
+      },
+      "then": {
+        "required": [
+          "credential",
+          "daily_spend_cap_usd"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "provider": {
+            "const": "openai_compatible"
+          }
+        },
+        "required": [
+          "provider"
+        ]
+      },
+      "then": {
+        "required": [
+          "base_url",
+          "credential",
+          "egress_host",
+          "daily_spend_cap_usd"
+        ]
+      }
+    }
+  ]
 }

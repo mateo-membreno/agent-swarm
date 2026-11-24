@@ -16,3 +16,28 @@ node_modules/
 .gemini/
 .ruff_cache/
 .impeccable/
+
+# Python build and packaging artifacts
+*.egg-info/
+build/
+dist/
+*.egg
+
+# Caches
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Secrets and local environment
+.env
+.env.*
+
+# OS and editor noise
+.DS_Store
+.idea/
+.vscode/
+
+# Runtime state and logs
+*.log
+*.db
+*.db-journal

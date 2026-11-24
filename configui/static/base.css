@@ -92,3 +92,8 @@ dialog#jump::backdrop { background: color-mix(in srgb, var(--bg) 70%, transparen
 .jump-list button:hover, .jump-list button:focus-visible { background: var(--surface-2); }
 
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
+
+/* multi-select of existing entries (arrays of references) */
+.checks { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; }
+.checks .check { display: flex; align-items: center; gap: 8px; font-weight: 400; cursor: pointer; }
+.checks input[type="checkbox"] { width: 16px; height: 16px; flex: none; }

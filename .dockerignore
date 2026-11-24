@@ -1,0 +1,19 @@
+# Never send these to the Docker daemon as build context.
+.git
+.venv
+.claude
+.agent
+.agents
+.cursor
+.devin
+.gemini
+.impeccable
+.ruff_cache
+.pytest_cache
+**/__pycache__
+**/node_modules
+secrets
+data
+audit
+config
+tests

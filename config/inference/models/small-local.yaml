@@ -1,4 +1,0 @@
-name: small-local
-backend: local-cpu
-model: /models/qwen2.5-1.5b-q4.gguf
-kind: chat

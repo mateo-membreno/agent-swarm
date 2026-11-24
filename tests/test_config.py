@@ -9,16 +9,21 @@ from configui.store import Store, StoreError
 
 REPO_CONFIG = Path(__file__).parent.parent / "config"
 
-API = {
-    "name": "weather_lookup",
-    "kind": "read",
-    "backend": {"type": "http", "url": "https://api.example.com/v1/weather", "method": "GET"},
-    "credential": "weather_key",
-    "auth": {"type": "bearer"},
-    "args_schema": {"type": "object", "additionalProperties": False, "properties": {"city": {"type": "string", "maxLength": 80}}},
-    "limits": {"rate": "10/min", "timeout": "10s", "max_response_bytes": 65536},
+TOPIC = {
+    "name": "email.triaged.v1",
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["message_id", "urgency"],
+        "properties": {
+            "message_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"},
+            "urgency": {"enum": ["low", "normal", "high"]},
+            "summary": {"type": "string", "maxLength": 280, "x-free-text": True},
+        },
+    },
+    "retention": "7d",
+    "partitions": 1,
 }
-
 
 
 @pytest.fixture
@@ -38,125 +43,119 @@ def paths(res):
 # ------------------------------------------------------------ shipped config
 def test_shipped_config_is_valid():
     s = Store(REPO_CONFIG)
-    assert s.list("api")
-    for name in s.list("api"):
-        assert s.validate("api", name, s.read("api", name)).errors == []
-    for kind in ("backend", "model"):
+    for kind in ("model", "topic", "agent", "source", "sink"):
         assert s.list(kind)
         for name in s.list(kind):
             assert s.validate(kind, name, s.read(kind, name)).errors == []
-    assert s.list("topic")
-    for name in s.list("topic"):
-        assert s.validate("topic", name, s.read("topic", name)).errors == []
 
 
-# ------------------------------------------------------------ api
-def test_valid_api_derives_egress_host(store):
-    res = store.validate("api", "weather_lookup", API)
-    assert res.errors == []
-    assert res.derived["egress_host"] == "api.example.com"
+# ------------------------------------------------------------ sources and sinks
+STORY = {"name": "news.story.v1", "schema": {"type": "object", "additionalProperties": False, "required": ["id", "title"], "properties": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"}, "title": {"type": "string", "maxLength": 200, "x-free-text": True}}},
+    "retention": "7d", "partitions": 1, "key": "id"}
+SOURCE = {"name": "feed", "type": "http_poll", "url": "https://api.example.com/v1/items", "topic": "news.story.v1", "interval": "5m",
+          "items_path": "items", "id_field": "uid", "map": {"id": "uid", "title": "headline"}}
+POST_SINK = {"name": "webhook", "type": "http_post", "topic": "news.story.v1", "url": "https://hooks.example.com/in",
+             "credential": "hook_key", "auth": {"type": "bearer"}}
 
 
-def test_api_requires_https_and_method_for_http(store):
-    d = copy.deepcopy(API)
-    d["backend"] = {"type": "http", "url": "http://insecure.example.com"}
-    assert store.validate("api", "weather_lookup", d).errors
+@pytest.fixture
+def flow(store):
+    store.save("topic", "news.story.v1", STORY)
+    return store
 
 
-def test_api_args_schema_must_forbid_extra_properties(store):
-    d = copy.deepcopy(API)
-    del d["args_schema"]["additionalProperties"]
-    assert "args_schema" in paths(store.validate("api", "weather_lookup", d))
+def test_source_derives_egress_host(flow):
+    res = flow.validate("source", "feed", SOURCE)
+    assert res.errors == [] and res.derived["egress_host"] == "api.example.com"
 
 
-def test_api_fixed_args_cannot_overlap_agent_args(store):
-    d = copy.deepcopy(API)
-    d["fixed_args"] = {"city": "Paris"}
-    assert "fixed_args" in paths(store.validate("api", "weather_lookup", d))
+def test_source_url_must_be_https(flow):
+    assert "url" in paths(flow.validate("source", "feed", dict(SOURCE, url="http://api.example.com/x")))
 
 
-def test_api_name_must_match_entry(store):
-    assert "name" in paths(store.validate("api", "other_name", API))
+def test_source_map_must_match_the_topic(flow):
+    assert any("requires 'title'" in e["message"] for e in flow.validate("source", "feed", dict(SOURCE, map={"id": "uid"})).errors)
+    assert "map.bogus" in paths(flow.validate("source", "feed", dict(SOURCE, map={**SOURCE["map"], "bogus": "x"})))
 
 
-def test_credential_needs_auth_method(store):
-    d = copy.deepcopy(API)
-    del d["auth"]
-    assert "auth" in paths(store.validate("api", "weather_lookup", d))
+def test_source_needs_an_existing_topic(store):
+    assert "topic" in paths(store.validate("source", "feed", SOURCE))
 
 
-def test_effect_without_approval_warns(store):
-    d = copy.deepcopy(API)
-    d.update(kind="effect")
-    d["backend"]["method"] = "POST"
-    res = store.validate("api", "weather_lookup", d)
-    assert res.errors == [] and any("approval" in w for w in res.warnings)
+def test_name_must_match_entry(flow):
+    assert "name" in paths(flow.validate("source", "other_name", SOURCE))
 
 
-def test_secret_literal_is_rejected(store):
-    d = copy.deepcopy(API)
-    d["description"] = "key is sk-ant-abcdefghijklmnop1234"
-    res = store.validate("api", "weather_lookup", d)
-    assert any("secret" in e["message"] for e in res.errors)
+def test_http_post_sink_warns_that_data_leaves_the_machine_and_reports_its_host(flow):
+    res = flow.validate("sink", "webhook", POST_SINK)
+    assert res.errors == [] and res.derived["egress_host"] == "hooks.example.com" and any("leaves this machine" in w for w in res.warnings)
 
 
-@pytest.mark.parametrize("bad", ["../evil", "Bad Name", "a", "x/y", ""])
-def test_path_traversal_names_rejected(store, bad):
-    with pytest.raises(StoreError):
-        store.save("api", bad, API)
+def test_http_post_sink_credential_and_auth_go_together(flow):
+    assert "auth" in paths(flow.validate("sink", "webhook", {k: v for k, v in POST_SINK.items() if k != "auth"}))
+    assert "credential" in paths(flow.validate("sink", "webhook", {k: v for k, v in POST_SINK.items() if k != "credential"}))
 
 
-# ------------------------------------------------------------ inference: backends + models
-CPU = {"name": "local-cpu", "kind": "local_cpu", "endpoint": "http://inference-cpu:8080/v1", "threads": 8, "max_concurrency": 2}
-HOSTED = {
-    "name": "anthropic", "kind": "hosted_api", "provider": "anthropic", "credential": "anthropic_api_key",
-    "egress_host": "api.anthropic.com", "daily_spend_cap_usd": 10,
-}
-GPU = {"name": "local-gpu", "kind": "local_gpu", "endpoint": "http://inference-gpu:8000/v1", "gpus": "auto"}
-SMALL = {"name": "small-local", "backend": "local-cpu", "model": "/models/q.gguf"}
-STRONG = {"name": "strong-hosted", "backend": "anthropic", "model": "claude-sonnet-5-5", "allowed_agents": ["notifier"]}
+def test_file_sink_path_placeholders_must_be_topic_fields(flow):
+    ok = {"name": "out", "type": "file", "topic": "news.story.v1", "path": "data/results/{id}.jsonl"}
+    assert flow.validate("sink", "out", ok).errors == []
+    assert "path" in paths(flow.validate("sink", "out", dict(ok, path="data/results/{nope}.jsonl")))
+    assert "path" in paths(flow.validate("sink", "out", dict(ok, path="data/../x/{id}.jsonl")))
+
+
+def test_there_is_no_api_or_connector_kind(store):
+    for kind in ("api", "connector", "backend"):
+        with pytest.raises(StoreError):
+            store.list(kind)
+
+
+# ------------------------------------------------------------ models (where a model runs is part of the model)
+SMALL = {"name": "small", "provider": "local", "model": "/models/q.gguf", "endpoint": "http://inference-cpu:8080/v1",
+         "max_concurrency": 2}
+STRONG = {"name": "claude-sonnet-5-5", "provider": "anthropic", "model": "claude-sonnet-5-5", "credential": "anthropic_api_key",
+          "daily_spend_cap_usd": 10, "allowed_agents": ["notifier"]}
+OPENAI = {"name": "gpt-x", "provider": "openai_compatible", "model": "gpt-x", "base_url": "https://api.openai.example/v1",
+          "egress_host": "api.openai.example", "credential": "openai_key", "daily_spend_cap_usd": 5}
 
 
 @pytest.fixture
 def inf(store):
-    """A store with a CPU backend, a hosted backend and one alias on each."""
-    store.save("backend", "local-cpu", CPU)
-    store.save("backend", "anthropic", HOSTED)
-    store.save("model", "small-local", SMALL)
-    store.save("model", "strong-hosted", STRONG)
+    """A store with one local and one hosted model."""
+    store.save("model", "small", SMALL)
+    store.save("model", "claude-sonnet-5-5", STRONG)
     return store
 
 
-def test_hosted_backend_requires_spend_cap_and_credential(store):
-    d = {k: v for k, v in HOSTED.items() if k not in ("daily_spend_cap_usd", "credential")}
-    assert store.validate("backend", "anthropic", d).errors
+def test_hosted_model_requires_spend_cap_and_credential(store):
+    d = {k: v for k, v in STRONG.items() if k not in ("daily_spend_cap_usd", "credential")}
+    assert store.validate("model", "claude-sonnet-5-5", d).errors
 
 
-def test_local_backend_requires_endpoint(store):
-    d = {k: v for k, v in CPU.items() if k != "endpoint"}
-    assert store.validate("backend", "local-cpu", d).errors
+def test_local_model_requires_endpoint(store):
+    d = {k: v for k, v in SMALL.items() if k != "endpoint"}
+    assert store.validate("model", "small", d).errors
 
 
-def test_openai_compatible_requires_base_url(store):
-    d = dict(HOSTED, provider="openai_compatible")
-    assert store.validate("backend", "anthropic", d).errors
+def test_openai_compatible_requires_base_url_and_matching_egress_host(store):
+    d = {k: v for k, v in OPENAI.items() if k != "base_url"}
+    assert store.validate("model", "gpt-x", d).errors
+    assert store.validate("model", "gpt-x", OPENAI).errors == []
+    assert "egress_host" in paths(store.validate("model", "gpt-x", dict(OPENAI, egress_host="evil.example")))
 
 
-def test_gpu_backend_accepts_auto_and_list(store):
-    for gpus in ("auto", [0, 1]):
-        assert store.validate("backend", "local-gpu", dict(GPU, gpus=gpus)).errors == []
+def test_anthropic_model_reports_its_egress_host(store):
+    assert store.validate("model", "claude-sonnet-5-5", STRONG).derived["egress_host"] == "api.anthropic.com"
 
 
-def test_hosted_backend_reports_egress_host(store):
-    assert store.validate("backend", "anthropic", HOSTED).derived["egress_host"] == "api.anthropic.com"
-
-
-def test_alias_must_reference_existing_backend(store):
-    assert "backend" in paths(store.validate("model", "small-local", SMALL))
+def test_there_is_no_separate_backend_kind(store):
+    assert "backend" not in {k.id for k in store.kinds()} if hasattr(store, "kinds") else True
+    with pytest.raises(StoreError):
+        store.list("backend")
 
 
 def test_valid_alias(inf):
-    assert inf.validate("model", "small-local", SMALL).errors == []
+    assert inf.validate("model", "small", SMALL).errors == []
 
 
 def test_model_names_may_contain_dots(inf):
@@ -165,80 +164,73 @@ def test_model_names_may_contain_dots(inf):
 
 
 def test_no_fallback_by_default(inf):
-    assert inf.read("model", "small-local").get("fallback") is None
+    assert inf.read("model", "small").get("fallback") is None
     assert inf.overview()["inference"]["fallback"] == []
 
 
 def test_fallback_to_hosted_warns_about_data_leaving_machine(inf):
-    res = inf.validate("model", "small-local", dict(SMALL, fallback=["strong-hosted"]))
+    res = inf.validate("model", "small", dict(SMALL, fallback=["claude-sonnet-5-5"]))
     assert res.errors == [] and any("hosted" in w for w in res.warnings)
 
 
 def test_fallback_cycle_and_self_rejected(inf):
-    inf.save("model", "strong-hosted", dict(STRONG, fallback=["small-local"]))
-    assert any("cycle" in e["message"] for e in inf.validate("model", "small-local", dict(SMALL, fallback=["strong-hosted"])).errors)
-    assert inf.validate("model", "small-local", dict(SMALL, fallback=["small-local"])).errors
+    inf.save("model", "claude-sonnet-5-5", dict(STRONG, fallback=["small"]))
+    assert any("cycle" in e["message"] for e in inf.validate("model", "small", dict(SMALL, fallback=["claude-sonnet-5-5"])).errors)
+    assert inf.validate("model", "small", dict(SMALL, fallback=["small"])).errors
 
 
 def test_fallback_to_unknown_alias_rejected(inf):
-    assert "fallback" in paths(inf.validate("model", "small-local", dict(SMALL, fallback=["nope"])))
+    assert "fallback" in paths(inf.validate("model", "small", dict(SMALL, fallback=["nope"])))
 
 
 def test_fallback_kind_mismatch_rejected(inf):
-    inf.save("model", "emb", {"name": "emb", "backend": "local-cpu", "model": "/m/bge.gguf", "kind": "embedding"})
-    assert inf.validate("model", "small-local", dict(SMALL, fallback=["emb"])).errors
+    inf.save("model", "emb", {"name": "emb", "provider": "local", "endpoint": "http://x:1/v1", "model": "/m/bge.gguf", "kind": "embedding"})
+    assert inf.validate("model", "small", dict(SMALL, fallback=["emb"])).errors
 
 
 def test_hosted_alias_without_allowlist_warns(inf):
     d = {k: v for k, v in STRONG.items() if k != "allowed_agents"}
-    assert any("allowed_agents" in w for w in inf.validate("model", "strong-hosted", d).warnings)
-
-
-def test_alias_is_invalid_if_its_backend_is_deleted(inf):
-    inf.delete("backend", "local-cpu")
-    errors = [a for a in inf.overview()["attention"] if a["level"] == "error"]
-    assert any(a["name"] == "small-local" and a["path"] == "backend" for a in errors)
+    assert any("allowed_agents" in w for w in inf.validate("model", "claude-sonnet-5-5", d).warnings)
 
 
 # ------------------------------------------------------------ save / diff
 def test_save_is_atomic_roundtrip_and_diff(store):
-    p = store.preview("api", "weather_lookup", API)
+    p = store.preview("topic", "email.triaged.v1", TOPIC)
     assert p["diff"].startswith("--- /dev/null") and not p["exists"]
-    store.save("api", "weather_lookup", API)
-    assert store.read("api", "weather_lookup") == API
-    assert store.list("api") == ["weather_lookup"]
-    d = copy.deepcopy(API)
-    d["limits"]["rate"] = "5/min"
-    diff = store.preview("api", "weather_lookup", d)["diff"]
-    assert "-  rate: 10/min" in diff and "+  rate: 5/min" in diff
+    store.save("topic", "email.triaged.v1", TOPIC)
+    assert store.read("topic", "email.triaged.v1") == TOPIC
+    assert store.list("topic") == ["email.triaged.v1"]
+    d = copy.deepcopy(TOPIC)
+    d["retention"] = "3d"
+    diff = store.preview("topic", "email.triaged.v1", d)["diff"]
+    assert "-retention: 7d" in diff and "+retention: 3d" in diff
     assert not list(store.dir.rglob("*.tmp"))
 
 
 def test_invalid_save_writes_nothing(store):
-    d = copy.deepcopy(API)
-    d["kind"] = "bogus"
+    d = copy.deepcopy(TOPIC)
+    d["retention"] = "forever"
     with pytest.raises(StoreError):
-        store.save("api", "weather_lookup", d)
-    assert store.list("api") == []
+        store.save("topic", "email.triaged.v1", d)
+    assert store.list("topic") == []
 
 
 # ------------------------------------------------------------ http
 def test_http_flow(client):
-    assert {k["id"] for k in client.get("/api/kinds").json()} == {"api", "backend", "model", "topic"}
-    r = client.post("/api/api/weather_lookup/preview", json=API)
+    assert {k["id"] for k in client.get("/api/kinds").json()} == {"model", "topic", "agent", "source", "sink"}
+    r = client.post("/api/topic/email.triaged.v1/preview", json=TOPIC)
     assert r.status_code == 200 and r.json()["errors"] == []
-    assert client.put("/api/api/weather_lookup", json=API).status_code == 200
-    assert client.get("/api/api").json() == {"names": ["weather_lookup"]}
-    assert client.get("/api/api/weather_lookup").json()["name"] == "weather_lookup"
-    bad = dict(API, kind="bogus")
-    r = client.put("/api/api/weather_lookup", json=bad)
+    assert client.put("/api/topic/email.triaged.v1", json=TOPIC).status_code == 200
+    assert client.get("/api/topic").json() == {"names": ["email.triaged.v1"]}
+    assert client.get("/api/topic/email.triaged.v1").json()["name"] == "email.triaged.v1"
+    r = client.put("/api/topic/email.triaged.v1", json=dict(TOPIC, retention="forever"))
     assert r.status_code == 422 and r.json()["errors"]
-    assert client.delete("/api/api/weather_lookup").status_code == 200
-    assert client.get("/api/api/weather_lookup").status_code == 404
+    assert client.delete("/api/topic/email.triaged.v1").status_code == 200
+    assert client.get("/api/topic/email.triaged.v1").status_code == 404
 
 
 def test_requires_json_content_type(client):
-    r = client.put("/api/api/weather_lookup", content="x", headers={"content-type": "text/plain"})
+    r = client.put("/api/topic/email.triaged.v1", content="x", headers={"content-type": "text/plain"})
     assert r.status_code == 415
 
 
@@ -256,23 +248,6 @@ def test_static_ui_served(client):
 
 
 # ------------------------------------------------------------ topics
-TOPIC = {
-    "name": "email.triaged.v1",
-    "schema": {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["message_id", "urgency"],
-        "properties": {
-            "message_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"},
-            "urgency": {"enum": ["low", "normal", "high"]},
-            "summary": {"type": "string", "maxLength": 280, "x-free-text": True},
-        },
-    },
-    "retention": "7d",
-    "partitions": 1,
-}
-
-
 def test_valid_topic_reports_free_text_channels(store):
     res = store.validate("topic", "email.triaged.v1", TOPIC)
     assert res.errors == []
@@ -342,18 +317,18 @@ def test_topic_with_dots_roundtrips_on_disk(store):
 # ------------------------------------------------------------ overview
 def test_overview_of_shipped_config():
     o = Store(REPO_CONFIG).overview()
-    assert o["counts"]["topic"] >= 3 and o["counts"]["api"] >= 1
+    assert o["counts"]["topic"] >= 2 and o["counts"]["source"] >= 1 and o["counts"]["sink"] >= 1
     assert [a for a in o["attention"] if a["level"] == "error"] == []
-    assert {"api.anthropic.com"} <= {host for host, _ in o["egress"]}
+    assert {"api.anthropic.com", "hn.algolia.com"} <= {host for host, _ in o["egress"]}
     assert any(m["hosted"] for m in o["inference"]["models"])
     assert o["inference"]["fallback"] == []
 
 
 def test_overview_surfaces_invalid_and_unreadable_files(tmp_path):
-    (tmp_path / "apis").mkdir()
-    (tmp_path / "apis" / "broken.yaml").write_text("name: broken\nkind: bogus\n")
-    (tmp_path / "apis" / "garbled.yaml").write_text("a: [unclosed\n")
-    (tmp_path / "apis" / "Bad Name.yaml").write_text("name: x\n")
+    (tmp_path / "sources").mkdir()
+    (tmp_path / "sources" / "broken.yaml").write_text("name: broken\ntype: bogus\n")
+    (tmp_path / "sources" / "garbled.yaml").write_text("a: [unclosed\n")
+    (tmp_path / "sources" / "Bad Name.yaml").write_text("name: x\n")
     o = Store(tmp_path).overview()
     levels = {(a["name"], a["level"]) for a in o["attention"]}
     assert ("broken", "error") in levels and ("garbled", "error") in levels and ("Bad Name", "error") in levels

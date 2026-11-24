@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harness canvas</title>
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="canvas.css">
+</head>
+<body class="canvas-page">
+<a class="skip" href="#stage">Skip to canvas</a>
+<header class="cbar">
+  <p class="mark"><a href="index.html">harness / config</a> <span aria-hidden="true">/</span> canvas</p>
+  <div id="changebar" class="changebar" role="toolbar" aria-label="Staged changes">
+    <span id="staged-count" class="muted" aria-live="polite">Up to date with deployed</span>
+    <button id="undo" class="ghost" type="button" disabled>Undo</button>
+    <button id="redo" class="ghost" type="button" disabled>Redo</button>
+    <button id="discard" class="ghost danger" type="button" hidden>Discard all</button>
+    <button id="deploy" class="primary" type="button" hidden>Deploy…</button>
+  </div>
+  <span id="live" class="muted live" role="status"></span>
+  <div class="viewtools">
+    <button id="reach-toggle" class="ghost" type="button" aria-pressed="false">Reachability</button>
+    <button id="relayout" class="ghost" type="button">Auto-layout</button>
+    <button id="fit" class="ghost" type="button">Fit</button>
+    <button id="search-btn" class="ghost" type="button">Search <kbd>Ctrl K</kbd></button>
+  </div>
+</header>
+<div id="banner" class="banner" role="status" hidden></div>
+<div class="cmain">
+  <aside id="palette" aria-label="Add to canvas">
+    <h2>Add</h2>
+    <button class="ghost" data-new="topic" type="button">Topic</button>
+    <button class="ghost" data-new="agent" type="button">Agent</button>
+    <button class="ghost" data-new="source" type="button">Source</button>
+    <button class="ghost" data-new="sink" type="button">Sink</button>
+    <p class="hint">Models are set up in the <a href="/">config menu</a>. Drag from a node's right handle to connect, or click the handle, then click a target.</p>
+    <h2>Legend</h2>
+    <ul id="legend" class="legend"></ul>
+    <p id="reach-summary" class="muted"></p>
+  </aside>
+  <div id="stage" tabindex="0" aria-label="Pipeline canvas">
+    <svg id="svg" role="application" aria-label="Pipelines"><g id="world"></g></svg>
+    <div id="zoom"><button class="ghost" id="zin" type="button" aria-label="Zoom in">+</button><button class="ghost" id="zout" type="button" aria-label="Zoom out">−</button></div>
+  </div>
+  <aside id="inspector" aria-label="Inspector"></aside>
+</div>
+<div id="modal-root"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="topicname.js"></script>
+  <script src="canvas-core.js"></script>
+<script src="canvas-edit.js"></script>
+<script src="canvas-panels.js"></script>
+<script>C.boot();</script>
+</body>
+</html>

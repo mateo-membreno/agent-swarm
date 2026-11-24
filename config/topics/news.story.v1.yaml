@@ -1,0 +1,27 @@
+name: news.story.v1
+description: One front-page story, as published by the source.
+schema:
+  $id: news.story.v1
+  type: object
+  additionalProperties: false
+  required:
+  - id
+  - title
+  properties:
+    id:
+      type: string
+      pattern: ^[A-Za-z0-9_-]{1,64}$
+    title:
+      type: string
+      maxLength: 300
+      x-free-text: true
+    url:
+      type: string
+      maxLength: 500
+      x-free-text: true
+    points:
+      type: integer
+      minimum: 0
+retention: 7d
+partitions: 1
+key: id

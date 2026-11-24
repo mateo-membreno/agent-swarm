@@ -9,8 +9,8 @@
   "properties": {
     "name": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+\\.v[1-9][0-9]*$",
-      "description": "<domain>.<event>.v<N>, e.g. email.triaged.v1. A breaking change creates a new version."
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.v[1-9][0-9]*$",
+      "description": "Type a plain name like News stories and it is saved as news_stories.v1. The .v1 is the version: a breaking schema change creates .v2."
     },
     "description": { "type": "string", "maxLength": 300 },
     "schema": {

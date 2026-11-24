@@ -1,5 +1,0 @@
-name: local-cpu
-kind: local_cpu
-endpoint: http://inference-cpu:8080/v1
-threads: 8
-max_concurrency: 2

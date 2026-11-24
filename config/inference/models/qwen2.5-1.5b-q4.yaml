@@ -1,0 +1,6 @@
+name: qwen2.5-1.5b-q4
+provider: local
+model: /models/qwen2.5-1.5b-q4.gguf
+endpoint: http://inference-cpu:8080/v1
+max_concurrency: 2
+kind: chat

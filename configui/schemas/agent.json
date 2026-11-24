@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "harness.agent",
+  "title": "Agent",
+  "description": "An agent template. Each event it receives runs in a fresh, isolated sandbox. Set concurrency to run several at once.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "trigger"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,62}$",
+      "description": "Lowercase letters, digits, underscore."
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 300
+    },
+    "build": {
+      "type": "string",
+      "pattern": "^agents-src/[a-z][a-z0-9_-]*$",
+      "description": "Local source directory with a Dockerfile. Built on deploy and pinned by image id. Use this or image."
+    },
+    "image": {
+      "type": "string",
+      "pattern": "^[a-z0-9./_-]+(:[A-Za-z0-9._-]+)?@sha256:[a-f0-9]{64}$",
+      "description": "A registry image pinned by digest. Use this or build."
+    },
+    "trigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "topic"
+      ],
+      "description": "The one topic this agent reads. One trigger per agent in this version.",
+      "properties": {
+        "topic": {
+          "type": "string",
+          "x-ref": "topic"
+        },
+        "filter": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Optional, e.g. payload.urgency == 'high'. Events that don't match are skipped."
+        }
+      }
+    },
+    "instructions": {
+      "type": "string",
+      "maxLength": 4000,
+      "x-multiline": true,
+      "description": "What this agent should do with each event, in plain words. Used by the built-in LLM agent (agents-src/llm_agent); ignored by custom code."
+    },
+    "writes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "topics": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "x-ref": "topic"
+          },
+          "description": "Topics this agent may publish to."
+        }
+      }
+    },
+    "inference": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "models": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "x-ref": "model"
+          },
+          "description": "Model aliases this agent may use. Empty means no inference."
+        },
+        "max_tokens_per_event": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000000,
+          "default": 20000
+        }
+      }
+    },
+    "isolation": {
+      "enum": [
+        "per_event",
+        "long_running"
+      ],
+      "default": "per_event",
+      "x-enum-labels": {
+        "per_event": "One sandbox per event (default)",
+        "long_running": "Long-running (not available yet)"
+      }
+    },
+    "concurrency": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64,
+      "default": 1,
+      "description": "How many sandboxes may run at the same time."
+    },
+    "sandbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpus": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 8,
+          "default": 0.5
+        },
+        "memory_mb": {
+          "type": "integer",
+          "minimum": 64,
+          "maximum": 16384,
+          "default": 256
+        },
+        "timeout_per_event_s": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600,
+          "default": 120
+        }
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10,
+          "default": 2
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "build"
+      ]
+    },
+    {
+      "required": [
+        "image"
+      ]
+    }
+  ]
+}

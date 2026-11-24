@@ -1,0 +1,23 @@
+name: summarizer
+description: Summarises each story in one sentence and gives it a topic tag.
+build: agents-src/llm_agent
+instructions: |-
+  You summarise news stories. For each story write a one-sentence summary (under 200 characters) and a short
+  lowercase topic tag such as "security", "ai", "science" or "startups". Do not invent facts that are not in the title.
+trigger:
+  topic: news.story.v1
+writes:
+  topics:
+  - news.summary.v1
+inference:
+  models:
+  - qwen2.5-1.5b-q4
+  max_tokens_per_event: 4000
+isolation: per_event
+concurrency: 2
+sandbox:
+  cpus: 0.5
+  memory_mb: 256
+  timeout_per_event_s: 180
+delivery:
+  max_retries: 2

@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "harness.sink",
+  "title": "Sink",
+  "description": "Takes data out of a topic and does something with it: writes a file, or POSTs it to an API. A sink is trusted code with no model; events it sends are already schema-checked.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "type",
+    "topic"
+  ],
+  "x-create-by": "type",
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,62}$"
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 300
+    },
+    "type": {
+      "enum": [
+        "file",
+        "http_post"
+      ],
+      "x-enum-labels": {
+        "file": "Write to a file",
+        "http_post": "POST to an API"
+      },
+      "description": "file appends events to a JSONL file under data/. http_post sends each event's payload as JSON."
+    },
+    "topic": {
+      "type": "string",
+      "x-ref": "topic",
+      "description": "Topic to read."
+    },
+    "path": {
+      "type": "string",
+      "pattern": "^data/[A-Za-z0-9_./{}-]+\\.jsonl$",
+      "default": "data/results/{id}.jsonl",
+      "x-when": {
+        "type": [
+          "file"
+        ]
+      },
+      "description": "Output file under data/. {field} is replaced by that payload field."
+    },
+    "url": {
+      "type": "string",
+      "pattern": "^https://[^\\s]+$",
+      "x-when": {
+        "type": [
+          "http_post"
+        ]
+      },
+      "description": "https only. Its host is added to the egress list."
+    },
+    "credential": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "x-when": {
+        "type": [
+          "http_post"
+        ]
+      },
+      "description": "Name of a file in secrets/. Never paste the secret itself."
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "x-when-sibling": "credential",
+      "description": "How the credential is sent.",
+      "properties": {
+        "type": {
+          "enum": [
+            "bearer",
+            "header"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]*$",
+          "x-when": {
+            "type": [
+              "header"
+            ]
+          },
+          "description": "Header name."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "header"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "name"
+            ]
+          }
+        }
+      ]
+    },
+    "timeout": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*(s|m|h)$",
+      "default": "10s",
+      "x-when": {
+        "type": [
+          "http_post"
+        ]
+      },
+      "description": "Give up on a request after this long."
+    },
+    "rate": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*/(sec|min|hour)$",
+      "default": "30/min",
+      "x-when": {
+        "type": [
+          "http_post"
+        ]
+      },
+      "description": "At most this many requests, e.g. 30/min."
+    },
+    "max_retries": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10,
+      "default": 3,
+      "x-when": {
+        "type": [
+          "http_post"
+        ]
+      },
+      "description": "Retries on a 429 or 5xx before the event is parked."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "file"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "path"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "http_post"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "url"
+        ]
+      }
+    }
+  ]
+}

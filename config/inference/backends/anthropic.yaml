@@ -1,6 +1,0 @@
-name: anthropic
-kind: hosted_api
-provider: anthropic
-credential: anthropic_api_key
-egress_host: api.anthropic.com
-daily_spend_cap_usd: 10

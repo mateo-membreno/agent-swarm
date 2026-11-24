@@ -1,0 +1,5 @@
+name: summaries_file
+description: Appends every summary to a JSONL file.
+type: file
+topic: news.summary.v1
+path: data/results/summaries.jsonl

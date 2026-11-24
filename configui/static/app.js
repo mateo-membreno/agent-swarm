@@ -86,12 +86,41 @@ function renderField(schema, parent, key, root, ctx, required, path) {
     sel.addEventListener("change", () => set(sel.value));
     wrap.append(sel);
     if (!names.length) wrap.append(el("button", { class: "link", type: "button", textContent: `Create a ${schema["x-ref"]} first`, onclick: () => go(schema["x-ref"], null, true) }));
+  } else if (schema.type === "string" && schema["x-multiline"]) {
+    const ta = describe(el("textarea", { id, value: cur ?? "", rows: 6, spellcheck: true, maxLength: schema.maxLength }));
+    ta.addEventListener("input", () => set(ta.value));
+    wrap.append(ta);
   } else if (schema.type === "string") {
     // An existing entry's name is its filename; renaming would silently create a copy.
     const locked = key === "name" && parent === state.data && !state.isNew;
     const inp = describe(el("input", { id, type: "text", value: cur ?? "", spellcheck: false, disabled: locked, autocomplete: "off" }));
-    inp.addEventListener("input", () => set(inp.value));
-    wrap.append(inp);
+    if (key === "name" && parent === state.data && state.kind === "topic" && !locked) {
+      // Free text in, valid topic name out: what is saved is shown right under the box.
+      const note = el("p", { class: "hint name-note", textContent: cur ? `Saved as ${cur}` : "Saved as: (type a name)" });
+      inp.addEventListener("input", () => {
+        const name = window.topicName(inp.value);
+        note.textContent = name ? `Saved as ${name}` : "Saved as: (type a name)";
+        set(name || undefined);
+      });
+      wrap.append(inp, note);
+    } else {
+      inp.addEventListener("input", () => set(inp.value));
+      wrap.append(inp);
+    }
+  } else if (schema.type === "array" && resolve(schema.items || {}, root)["x-ref"]) {
+    // Pick from what exists; anything already saved but missing is shown so it can be fixed, not silently dropped.
+    const ref = resolve(schema.items, root)["x-ref"];
+    const names = state.refs[ref] || [];
+    const chosen = new Set(cur || []);
+    const group = describe(el("div", { id, class: "checks", role: "group", "aria-label": schema.title || key }));
+    const options = [...names, ...[...chosen].filter((n) => !names.includes(n))];
+    if (!options.length) group.append(el("p", { class: "muted", textContent: `(no ${ref} yet)` }));
+    for (const n of options) {
+      const cb = el("input", { type: "checkbox", checked: chosen.has(n) });
+      cb.addEventListener("change", () => { cb.checked ? chosen.add(n) : chosen.delete(n); set([...chosen]); });
+      group.append(el("label", { class: "check" }, cb, ` ${n}${names.includes(n) ? "" : " (missing)"}`));
+    }
+    wrap.append(group);
   } else if (schema.type === "array" && resolve(schema.items || {}, root).type === "string") {
     const ta = describe(el("textarea", { id, value: (cur || []).join("\n"), placeholder: "one per line", rows: 3 }));
     ta.addEventListener("input", () => set(ta.value.split("\n").map((s) => s.trim()).filter(Boolean)));
@@ -184,10 +213,27 @@ function buildForm() {
   return form;
 }
 
+function collectRefs(schema, out = new Set()) {
+  if (!schema || typeof schema !== "object") return out;
+  if (schema["x-ref"]) out.add(schema["x-ref"]);
+  for (const sub of Object.values(schema.properties || {})) collectRefs(sub, out);
+  if (schema.items) collectRefs(schema.items, out);
+  return out;
+}
+
 async function loadRefs(schema) {
-  for (const sub of Object.values(schema.properties || {})) {
-    if (sub["x-ref"]) state.refs[sub["x-ref"]] = (await api("GET", `/api/${sub["x-ref"]}`)).json.names || [];
+  for (const ref of collectRefs(schema)) state.refs[ref] = (await api("GET", `/api/${ref}`)).json.names || [];
+}
+
+// Empty objects and arrays are the same as "not set"; sending them would make an untouched entry look edited.
+function pruned(v) {
+  if (Array.isArray(v)) return v.length ? v : undefined;
+  if (v && typeof v === "object") {
+    const out = {};
+    for (const [k, x] of Object.entries(v)) { const p = pruned(x); if (p !== undefined) out[k] = p; }
+    return Object.keys(out).length ? out : undefined;
   }
+  return v;
 }
 
 async function openEditor(focus = false) {
@@ -222,7 +268,7 @@ async function preview() {
   if (state.isNew && state.listed.includes(name)) {
     return showIssues([{ path: "name", message: "an entry with this name already exists" }], [], {});
   }
-  const r = await api("POST", `/api/${state.kind}/${encodeURIComponent(name)}/preview`, state.data);
+  const r = await api("POST", `/api/${state.kind}/${encodeURIComponent(name)}/preview`, pruned(state.data) || {});
   if (seq !== state.seq) return; // a newer edit superseded this response
   if (!r.ok) return showIssues([{ path: "name", message: r.json.error || "preview failed" }], [], {});
   showIssues(r.json.errors, r.json.warnings, r.json.derived);
@@ -275,7 +321,7 @@ function renderDiff(diff) {
 
 async function save_() {
   const name = currentName();
-  const r = await api("PUT", `/api/${state.kind}/${encodeURIComponent(name)}`, state.data);
+  const r = await api("PUT", `/api/${state.kind}/${encodeURIComponent(name)}`, pruned(state.data) || {});
   if (!r.ok) return showIssues(r.json.errors || [{ path: "", message: r.json.error || "save failed" }], [], {});
   state.isNew = false; state.name = name;
   await loadList(); await openEditor(true);
@@ -328,25 +374,27 @@ async function showOverview() {
       : el("p", { class: "ok", textContent: "Nothing is configured to leave this machine." })));
 
   const inf = o.inference;
-  root.append(dash("Inference", `${inf.backends.length} backends, ${inf.models.length} models`,
-    inf.backends.length
-      ? table("Inference backends", ["Backend", "Kind", "Target", "Concurrency"],
-          inf.backends.map((b) => [link("backend", b.name), b.kind, txt(b.target), txt(b.max_concurrency)]))
-      : empty("No inference backends configured.", "backend"),
+  root.append(dash("Models", inf.models.length,
     inf.models.length
-      ? table("Model aliases", ["Alias", "Backend", "Model", "Kind", "Agents"],
-          inf.models.map((m) => [link("model", m.alias), m.backend, txt(m.model), m.kind,
+      ? table("Models", ["Model", "Where", "Runs at", "Kind", "Agents"],
+          inf.models.map((m) => [link("model", m.name), m.hosted ? el("span", { class: "warn-text", textContent: `hosted (${m.provider})` }) : "local", txt(m.target), m.kind,
             m.allowed_agents.length ? m.allowed_agents.join(", ") : el("span", { class: m.hosted ? "warn-text" : "muted", textContent: m.hosted ? "any agent (hosted)" : "any agent" })]))
-      : (inf.backends.length ? empty("No model aliases configured. Agents can't use inference until one exists.", "model") : null),
+      : empty("No models configured. Agents can't use inference until one exists.", "model"),
     inf.fallback.length
-      ? table("Fallback chains", ["Alias", "Falls back to"], inf.fallback.map((f) => [f.alias, f.chain.join(" then ")]))
-      : el("p", { class: "muted", textContent: "No fallback configured: if a backend is down, inference fails." })));
+      ? table("Fallback chains", ["Model", "Falls back to"], inf.fallback.map((f) => [f.name, f.chain.join(" then ")]))
+      : el("p", { class: "muted", textContent: "No fallback configured: if a model is down, inference fails." })));
 
-  root.append(dash("APIs", o.apis.length,
-    o.apis.length
-      ? table("Registered APIs", ["API", "Kind", "Target", "Credential", "Approval", "Rate"],
-          o.apis.map((a) => [link("api", a.name), a.kind, a.target, txt(a.credential), a.approval, txt(a.rate)]))
-      : empty("No APIs registered.", "api")));
+  root.append(dash("Sources", o.sources.length,
+    o.sources.length
+      ? table("Where data comes in", ["Source", "Polls", "Every", "Into topic"],
+          o.sources.map((x) => [link("source", x.name), x.target, x.interval, x.topic]))
+      : empty("No sources yet. Add one to bring data into a topic.", "source")));
+
+  root.append(dash("Sinks", o.sinks.length,
+    o.sinks.length
+      ? table("Where data goes out", ["Sink", "Does", "From topic", "To"],
+          o.sinks.map((x) => [link("sink", x.name), x.type === "http_post" ? "POST" : "file", x.topic, x.target]))
+      : empty("No sinks yet. Add one to do something with a topic's events.", "sink")));
 
   root.append(dash("Topics", o.topics.length,
     o.topics.length
@@ -355,7 +403,6 @@ async function showOverview() {
             t.free_text.length ? t.free_text.map((f) => `${f.path} (${f.max_length})`).join(", ") : el("span", { class: "muted", textContent: "none" })]))
       : empty("No topics configured.", "topic")));
 
-  root.append(el("p", { class: "muted todo", textContent: "Not configurable here yet: agents, connectors, pipelines." }));
 }
 
 // ================================================================= navigation

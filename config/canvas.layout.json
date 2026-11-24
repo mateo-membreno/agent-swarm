@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "nodes": {
+    "topic:news.story.v1": {
+      "x": 289,
+      "y": 499
+    },
+    "agent:summarizer": {
+      "x": 444,
+      "y": 279
+    },
+    "topic:news.summary.v1": {
+      "x": 590,
+      "y": 91
+    },
+    "source:hn_source": {
+      "x": -39,
+      "y": 140
+    },
+    "sink:summaries_file": {
+      "x": 918,
+      "y": 128
+    }
+  },
+  "viewport": {
+    "x": 42.84249084249084,
+    "y": 50.94871794871795,
+    "zoom": 0.7106227106227107
+  }
+}

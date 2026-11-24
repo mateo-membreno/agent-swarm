@@ -64,65 +64,7 @@ class Kind:
 
 # ---------------------------------------------------------------- semantics
 
-def _semantic_api(name: str, data: dict, config_dir: Path) -> Result:
-    r = Result()
-    if data.get("name") != name:
-        r.errors.append({"path": "name", "message": f"must equal the entry name '{name}'"})
-    args = data.get("args_schema")
-    if isinstance(args, dict):
-        try:
-            Draft202012Validator.check_schema(args)
-        except SchemaError as e:
-            r.errors.append({"path": "args_schema", "message": f"not a valid JSON Schema: {e.message}"})
-        else:
-            if args.get("type") == "object" and args.get("additionalProperties") is not False:
-                r.errors.append({"path": "args_schema", "message": "object schemas must set additionalProperties: false"})
-            if args.get("type") != "object":
-                r.errors.append({"path": "args_schema", "message": "must describe an object (type: object)"})
-    fixed = data.get("fixed_args")
-    if isinstance(fixed, dict) and isinstance(args, dict) and isinstance(args.get("properties"), dict):
-        clash = sorted(set(fixed) & set(args["properties"]))
-        if clash:
-            r.errors.append({"path": "fixed_args", "message": f"also settable by the agent via args_schema: {', '.join(clash)}"})
-    backend = data.get("backend") or {}
-    if backend.get("type") == "http" and isinstance(backend.get("url"), str):
-        host = urlparse(backend["url"]).hostname
-        if host:
-            r.derived["egress_host"] = host
-        else:
-            r.errors.append({"path": "backend.url", "message": "no host in URL"})
-        if data.get("credential") and not data.get("auth"):
-            r.errors.append({"path": "auth", "message": "a credential is set but no auth method says how to inject it"})
-    if data.get("auth") and not data.get("credential"):
-        r.errors.append({"path": "credential", "message": "auth is set but no credential"})
-    if data.get("kind") == "effect":
-        if data.get("approval", "none") == "none":
-            r.warnings.append(
-                "Effect API without approval: agents can trigger this effect unattended. "
-                "Prefer a sink connector, or set approval: required."
-            )
-    elif data.get("approval") == "required":
-        r.warnings.append("approval has no effect on read APIs.")
-    if data.get("kind") == "read" and backend.get("type") == "http" and backend.get("method") not in (None, "GET"):
-        r.warnings.append(f"Read API uses {backend.get('method')}; make sure it has no side effects.")
-    if not data.get("limits"):
-        r.warnings.append("No limits set; add rate, timeout and max_response_bytes.")
-    return r
-
-
-BACKEND_RE = re.compile(r"^[a-z][a-z0-9-]{0,40}$")
 MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,60}$")
-
-
-def _semantic_backend(name: str, data: dict, config_dir: Path) -> Result:
-    r = Result()
-    if data.get("name") != name:
-        r.errors.append({"path": "name", "message": f"must equal the entry name '{name}'"})
-    if data.get("kind") == "local_gpu" and data.get("gpus") is None:
-        r.warnings.append("No gpus setting; defaulting to auto.")
-    if data.get("kind") == "hosted_api" and data.get("egress_host"):
-        r.derived["egress_host"] = data["egress_host"]
-    return r
 
 
 def _semantic_model(name: str, data: dict, config_dir: Path) -> Result:
@@ -137,12 +79,15 @@ def _semantic_model(name: str, data: dict, config_dir: Path) -> Result:
         except (StoreError, yaml.YAMLError):
             return None
 
-    backend = read("backend", data.get("backend", ""))
-    if backend is None:
-        r.errors.append({"path": "backend", "message": f"unknown backend '{data.get('backend')}'"})
-    hosted = bool(backend) and backend.get("kind") == "hosted_api"
+    hosted = data.get("provider") in ("anthropic", "openai_compatible")
+    host = "api.anthropic.com" if data.get("provider") == "anthropic" else data.get("egress_host")
+    if hosted and host:
+        r.derived["egress_host"] = host
+    base_host = urlparse(data["base_url"]).hostname if data.get("base_url") else None
+    if data.get("provider") == "openai_compatible" and base_host and base_host != data.get("egress_host"):
+        r.errors.append({"path": "egress_host", "message": "must equal the host of base_url"})
     if hosted and not data.get("allowed_agents"):
-        r.warnings.append("Hosted alias with no allowed_agents: every agent may send content off the machine.")
+        r.warnings.append("Hosted model with no allowed_agents: every agent may send content off the machine.")
     kind = data.get("kind", "chat")
     for target in data.get("fallback") or []:
         path = "fallback"
@@ -151,13 +96,12 @@ def _semantic_model(name: str, data: dict, config_dir: Path) -> Result:
             continue
         t = read("model", target)
         if t is None:
-            r.errors.append({"path": path, "message": f"unknown model alias '{target}'"})
+            r.errors.append({"path": path, "message": f"unknown model '{target}'"})
             continue
         if t.get("kind", "chat") != kind:
-            r.errors.append({"path": path, "message": f"'{target}' is a different kind (chat/embedding) than this alias"})
-        tb = read("backend", t.get("backend", ""))
-        if tb and tb.get("kind") == "hosted_api" and not hosted:
-            r.warnings.append(f"Fallback to '{target}' sends data to a hosted API if this backend is down.")
+            r.errors.append({"path": path, "message": f"'{target}' is a different kind (chat/embedding) than this model"})
+        if t.get("provider") != "local" and not hosted:
+            r.warnings.append(f"Fallback to '{target}' sends data to a hosted API if this model is down.")
     # A chain that leads back here is a cycle.
     seen: set[str] = set()
     stack = list(data.get("fallback") or [])
@@ -174,7 +118,7 @@ def _semantic_model(name: str, data: dict, config_dir: Path) -> Result:
     return r
 
 
-TOPIC_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+\.v[1-9][0-9]*$")
+TOPIC_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*\.v[1-9][0-9]*$")
 RESERVED_TOPIC_PREFIXES = ("dlq.", "harness.")
 RESERVED_TOPICS = {"jobs.completed.v1"}
 
@@ -235,16 +179,122 @@ def _semantic_topic(name: str, data: dict, config_dir: Path) -> Result:
     return r
 
 
+
+def _reader(config_dir: Path) -> Callable[[str, str], dict | None]:
+    store = Store(config_dir)
+
+    def read(kind_id: str, entry: str) -> dict | None:
+        try:
+            return store.read(kind_id, entry)
+        except (StoreError, yaml.YAMLError):
+            return None
+
+    return read
+
+
+def _semantic_agent(name: str, data: dict, config_dir: Path) -> Result:
+    r = Result()
+    if data.get("name") != name:
+        r.errors.append({"path": "name", "message": f"must equal the entry name '{name}'"})
+    read = _reader(config_dir)
+    t = data.get("trigger") or {}
+    if read("topic", t.get("topic", "")) is None:
+        r.errors.append({"path": "trigger.topic", "message": f"unknown topic '{t.get('topic')}'"})
+    if t.get("filter"):
+        from harness_core import filterexpr
+        try:
+            filterexpr.validate(t["filter"])
+        except filterexpr.FilterError as e:
+            r.errors.append({"path": "trigger.filter", "message": str(e)})
+    trig = {t.get("topic")}
+    for i, topic in enumerate((data.get("writes") or {}).get("topics") or []):
+        if read("topic", topic) is None:
+            r.errors.append({"path": f"writes.topics.{i}", "message": f"unknown topic '{topic}'"})
+        if topic in trig:
+            r.warnings.append(f"Writes to '{topic}', which is also its trigger: every event it publishes starts another run (a loop).")
+    hosted = []
+    for i, alias in enumerate((data.get("inference") or {}).get("models") or []):
+        m = read("model", alias)
+        if m is None:
+            r.errors.append({"path": f"inference.models.{i}", "message": f"unknown model '{alias}'"})
+            continue
+        allowed = m.get("allowed_agents")
+        if allowed is not None and name not in allowed:
+            r.errors.append({"path": f"inference.models.{i}", "message": f"'{alias}' does not list '{name}' in allowed_agents"})
+        if m.get("provider") != "local":
+            hosted.append(alias)
+    if hosted:
+        r.warnings.append(f"Sends event content to a hosted API via: {', '.join(hosted)}.")
+    if data.get("isolation") == "long_running":
+        r.errors.append({"path": "isolation", "message": "long_running is not available in this version"})
+    if not (data.get("writes") or {}).get("topics"):
+        r.warnings.append("This agent writes to no topic, so its work has no visible effect.")
+    return r
+
+
+def _topic_props(read, topic_name: str | None) -> tuple[dict | None, dict]:
+    topic = read("topic", topic_name) if topic_name else None
+    return topic, (((topic or {}).get("schema") or {}).get("properties")) or {}
+
+
+def _semantic_source(name: str, data: dict, config_dir: Path) -> Result:
+    r = Result()
+    if data.get("name") != name:
+        r.errors.append({"path": "name", "message": f"must equal the entry name '{name}'"})
+    topic, props = _topic_props(_reader(config_dir), data.get("topic"))
+    if data.get("topic") and topic is None:
+        r.errors.append({"path": "topic", "message": f"unknown topic '{data['topic']}'"})
+    host = urlparse(data["url"]).hostname if isinstance(data.get("url"), str) else None
+    if host:
+        r.derived["egress_host"] = host
+    elif data.get("url"):
+        r.errors.append({"path": "url", "message": "no host in URL"})
+    if topic is not None:
+        mapped = data.get("map") or {}
+        for k in sorted(set(mapped) - set(props)):
+            r.errors.append({"path": f"map.{k}", "message": f"'{k}' is not a field of topic '{data['topic']}'"})
+        for k in sorted(set((topic.get("schema") or {}).get("required") or []) - set(mapped)):
+            r.errors.append({"path": "map", "message": f"topic '{data['topic']}' requires '{k}' but the map does not set it"})
+    return r
+
+
+def _semantic_sink(name: str, data: dict, config_dir: Path) -> Result:
+    r = Result()
+    if data.get("name") != name:
+        r.errors.append({"path": "name", "message": f"must equal the entry name '{name}'"})
+    topic, props = _topic_props(_reader(config_dir), data.get("topic"))
+    if data.get("topic") and topic is None:
+        r.errors.append({"path": "topic", "message": f"unknown topic '{data['topic']}'"})
+    if data.get("type") == "file" and data.get("path"):
+        if ".." in data["path"]:
+            r.errors.append({"path": "path", "message": "must not contain '..'"})
+        for ph in re.findall(r"{([a-z_]+)}", data["path"]):
+            if ph not in props:
+                r.errors.append({"path": "path", "message": f"'{{{ph}}}' is not a field of topic '{data.get('topic')}'"})
+    if data.get("type") == "http_post":
+        host = urlparse(data["url"]).hostname if isinstance(data.get("url"), str) else None
+        if host:
+            r.derived["egress_host"] = host
+        elif data.get("url"):
+            r.errors.append({"path": "url", "message": "no host in URL"})
+        if data.get("auth") and not data.get("credential"):
+            r.errors.append({"path": "credential", "message": "auth is set but no credential"})
+        if data.get("credential") and not data.get("auth"):
+            r.errors.append({"path": "auth", "message": "a credential is set but no auth says how to send it"})
+        r.warnings.append(f"Sends the events on '{data.get('topic')}' to {host or 'an external URL'}: that data leaves this machine.")
+    return r
+
+
 KINDS: dict[str, Kind] = {
     k.id: k
     for k in [
-        Kind("api", "APIs", "apis", "api.json", _semantic_api),
-        Kind("backend", "Backends", "inference/backends", "backend.json", _semantic_backend, BACKEND_RE,
-             "lowercase letters, digits, hyphen; start with a letter, e.g. local-gpu"),
         Kind("model", "Models", "inference/models", "model.json", _semantic_model, MODEL_RE,
              "letters, digits, dot, underscore, hyphen, e.g. qwen2.5-7b-instruct"),
         Kind("topic", "Topics", "topics", "topic.json", _semantic_topic, TOPIC_RE,
-             "<domain>.<event>.v<N>, e.g. email.triaged.v1"),
+             "a name ending in .v<N>, e.g. news_stories.v1 (the UI turns free text into this)"),
+        Kind("agent", "Agents", "agents", "agent.json", _semantic_agent),
+        Kind("source", "Sources", "sources", "source.json", _semantic_source),
+        Kind("sink", "Sinks", "sinks", "sink.json", _semantic_sink),
     ]
 }
 
@@ -265,8 +315,20 @@ def _find_secrets(value: Any, path: str = "") -> list[str]:
     return hits
 
 
+class _Dumper(yaml.SafeDumper):
+    pass
+
+
+def _str(dumper, value):
+    """Multi-line text (an agent's instructions) is written as a readable block, not one quoted line."""
+    return dumper.represent_scalar("tag:yaml.org,2002:str", value, style="|" if "\n" in value else None)
+
+
+_Dumper.add_representer(str, _str)
+
+
 def _dump(data: Any) -> str:
-    return yaml.safe_dump(data, sort_keys=False, default_flow_style=False, allow_unicode=True)
+    return yaml.dump(data, Dumper=_Dumper, sort_keys=False, default_flow_style=False, allow_unicode=True)
 
 
 class Store:
@@ -287,6 +349,17 @@ class Store:
         if (self.dir / kind.path).resolve() not in p.parents:
             raise StoreError("invalid name")
         return p
+
+    def fingerprint(self) -> str:
+        """A hash of every config file, so the running stack can tell when a deploy has changed something."""
+        import hashlib
+        h = hashlib.sha256()
+        for kind in KINDS.values():
+            d = self.dir / kind.path
+            for p in sorted(d.glob("*.yaml")) if d.is_dir() else []:
+                h.update(f"{kind.id}/{p.name}".encode())
+                h.update(p.read_bytes())
+        return h.hexdigest()[:16]
 
     # -- reads
     def list(self, kind_id: str) -> list[str]:
@@ -324,43 +397,33 @@ class Store:
                 attention.append({"kind": kind_id, "name": name, "level": "warning", "path": "", "message": w})
             return data, res
 
-        apis = []
-        for name in self.list("api"):
-            a, res = load("api", name)
-            b = d(a.get("backend"))
-            if b.get("type") == "http":
-                host = res.derived.get("egress_host") or "?"
-                target = f"{b.get('method', '?')} {host}"
-                egress.append({"host": host, "via": f"API {name}"})
-            else:
-                target = f"adapter {b.get('name', '?')}"
-            apis.append({
-                "name": name, "kind": a.get("kind"), "description": a.get("description", ""), "target": target,
-                "credential": a.get("credential"), "approval": a.get("approval", "none"), "rate": d(a.get("limits")).get("rate"),
-            })
+        sources, sinks = [], []
+        for name in self.list("source"):
+            d_, res = load("source", name)
+            sources.append({"name": name, "type": d_.get("type"), "target": res.derived.get("egress_host"), "topic": d_.get("topic"),
+                            "interval": d_.get("interval", "10m")})
+            if res.derived.get("egress_host"):
+                egress.append({"host": res.derived["egress_host"], "via": f"source {name}"})
+        for name in self.list("sink"):
+            d_, res = load("sink", name)
+            sinks.append({"name": name, "type": d_.get("type"), "topic": d_.get("topic"),
+                          "target": res.derived.get("egress_host") or d_.get("path")})
+            if res.derived.get("egress_host"):
+                egress.append({"host": res.derived["egress_host"], "via": f"sink {name}"})
 
-        backends = []
-        for name in self.list("backend"):
-            b, _ = load("backend", name)
-            backends.append({
-                "name": name,
-                "kind": b.get("kind"),
-                "target": b.get("endpoint") or b.get("egress_host"),
-                "max_concurrency": b.get("max_concurrency"),
-            })
-            if b.get("kind") == "hosted_api" and b.get("egress_host"):
-                egress.append({"host": b["egress_host"], "via": f"inference backend {name}"})
-        backend_kind = {b["name"]: b["kind"] for b in backends}
         models = []
         fallback = []
-        for alias in self.list("model"):
-            m, _ = load("model", alias)
+        for name in self.list("model"):
+            m, res = load("model", name)
             models.append({
-                "alias": alias, "backend": m.get("backend"), "model": m.get("model"), "kind": m.get("kind", "chat"),
-                "allowed_agents": m.get("allowed_agents") or [], "hosted": backend_kind.get(m.get("backend")) == "hosted_api",
+                "name": name, "provider": m.get("provider"), "model": m.get("model"), "kind": m.get("kind", "chat"),
+                "target": m.get("endpoint") or res.derived.get("egress_host"), "max_concurrency": m.get("max_concurrency"),
+                "allowed_agents": m.get("allowed_agents") or [], "hosted": m.get("provider") != "local",
             })
+            if m.get("provider") != "local" and res.derived.get("egress_host"):
+                egress.append({"host": res.derived["egress_host"], "via": f"model {name}"})
             if m.get("fallback"):
-                fallback.append({"alias": alias, "chain": m["fallback"]})
+                fallback.append({"name": name, "chain": m["fallback"]})
 
         topics = []
         for name in self.list("topic"):
@@ -371,9 +434,10 @@ class Store:
             })
 
         return {
-            "counts": {"api": len(apis), "topic": len(topics), "backends": len(backends), "models": len(models)},
-            "apis": apis,
-            "inference": {"backends": backends, "models": models, "fallback": fallback},
+            "counts": {"source": len(sources), "sink": len(sinks), "topic": len(topics), "models": len(models)},
+            "sources": sources,
+            "sinks": sinks,
+            "inference": {"models": models, "fallback": fallback},
             "topics": topics,
             "egress": sorted({(e["host"], e["via"]) for e in egress}),
             "attention": attention,
