@@ -50,7 +50,7 @@ jobs:
       - name: JS syntax
         run: |
           node --check configui/static/app.js
-          for f in canvas-core canvas-edit canvas-panels; do node --check configui/static/$f.js; done
+          for f in topicname canvas-core canvas-edit canvas-panels; do node --check configui/static/$f.js; done
 
   smoke:
     name: Server boots
@@ -73,7 +73,7 @@ jobs:
             sleep 0.5
           done
           curl -fsS http://127.0.0.1:8787/ | grep -q "Harness config"
-          curl -fsS http://127.0.0.1:8787/api/api | grep -q hn_front_page
+          curl -fsS http://127.0.0.1:8787/api/source | grep -q hn_source
           # Foreign Host headers must be refused (DNS-rebinding guard).
           test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example.com' http://127.0.0.1:8787/api/kinds)" = "400"
           kill $pid
